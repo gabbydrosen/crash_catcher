@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+models/*.task
+camera_test.jpg
+# Participant data contains faces: never commit it.
+data/

@@ -1,0 +1,7 @@
+# On the Pi, install with setup_pi.sh (picamera2 and gpiozero come from apt).
+mediapipe>=1.1.1
+smbus2
+pytest
+# Training (later)
+scikit-learn
+pandas
