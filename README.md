@@ -60,7 +60,8 @@ Notes:
 ## Setup on the Pi
 
 ```bash
-git clone <this repo> crash-catcher && cd crash-catcher
+git clone https://github.com/gabbydrosen/crash_catcher.git crash-catcher
+cd crash-catcher
 bash setup_pi.sh
 source .venv/bin/activate
 ```
