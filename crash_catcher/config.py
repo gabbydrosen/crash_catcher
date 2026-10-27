@@ -13,8 +13,8 @@ class CameraConfig:
     # "picamera" for a Raspberry Pi camera module (ribbon cable),
     # "usb" for a USB webcam, or a path to a video file for testing.
     source: str = "picamera"
-    width: int = 640
-    height: int = 480
+    width: int = 768   # 16:9 keeps the full view of wide cameras (Camera Module 3 Wide)
+    height: int = 432
     fps: int = 30
     usb_index: int = 0
 
