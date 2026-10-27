@@ -10,6 +10,7 @@ braking hard. It is built to grow into a predictive system that warns
 | File | What it does |
 |---|---|
 | `crash_catcher/face_tracker.py` | Google MediaPipe Face Landmarker: head angle, iris position, blinks |
+| `crash_catcher/phone.py` | Phone detection (AI HAT+ or CPU) and "phone in use" tracking |
 | `crash_catcher/attention.py` | Road-zone calibration; decides "eyes on/off road" and times each glance |
 | `crash_catcher/imu.py` | MPU-6050 driver; converts readings into forward acceleration and yaw rate |
 | `crash_catcher/motion.py` | Classifies motion: stopped / cruising / turning / hard braking |
@@ -74,6 +75,7 @@ python scripts/hardware_check.py buzzer   # three tones
 python scripts/hardware_check.py imu      # live numbers; rotate and slide the board
 python scripts/hardware_check.py camera   # saves camera_test.jpg
 python scripts/hardware_check.py face     # live head angle and gaze
+python scripts/hardware_check.py phone    # hold a phone up to the camera
 python -m pytest tests                    # logic tests, no hardware needed
 ```
 
@@ -111,16 +113,40 @@ In the preview window, press `e` to mark an event, such as when you give a distr
 prompt. You can also wire a push button between a free GPIO and GND and set
 `event_button` in `config.py`.
 
-## Do I need the AI HAT+?
+## Phone detection and the AI HAT+
 
-**Not for this part.** MediaPipe runs on the Pi 5's CPU (expect roughly 15–30 fps
-at 640×480; the `face` check prints the real number). The AI HAT+'s Hailo chip only runs
-models compiled specifically for it, and MediaPipe can't use it.
+`crash_catcher/phone.py` looks for a phone in every frame and decides whether it's
+**in use**: in view for at least 1 s. It also records *how* it's being used:
 
-It will be useful for **phone detection with YOLO** (one of the precursor cues in
-Novelty 2). YOLO on the CPU alongside MediaPipe would drop the frame rate a lot,
-and Raspberry Pi provides ready-made YOLO models for the Hailo chip. That's the next
-integration step after this one.
+| Reason | Meaning |
+|---|---|
+| `looking` | phone in view and the driver's eyes are off the road |
+| `to_ear` | phone next to the face (a call) |
+| `holding` | phone in view, eyes still on the road |
+
+A phone in use for 1 s while the car is moving triggers an alert (flashing red +
+beep). It's logged as `alert_phone`, separately from the glance alerts. Set
+`phone_alerts_live = False` in `config.py` to log it without alerting.
+The precursor cues for Novelty 2 are logged too: the phone's size, how fast it grows
+as it's lifted, and screen brightness.
+
+**Which chip runs it:**
+- **AI HAT+ (preferred):** YOLOv8 from Raspberry Pi's ready-made models, run on the Hailo
+  chip. Face tracking keeps the CPU to itself.
+- **CPU fallback:** Google MediaPipe EfficientDet-Lite0, if the HAT isn't working.
+  It runs at most 8 times a second, so face tracking stays fast.
+
+The default `--phone auto` picks the HAT if it works. The first lines printed
+say which one it's using. To force one, use `--phone hailo`, `--phone mediapipe` or `--phone off`.
+
+MediaPipe *face* tracking always runs on the CPU, because the Hailo chip only runs
+models compiled specifically for it.
+
+**What a ready-made detector can't do well:** it finds a phone that's held up or
+lit in front of the camera, but often misses one mostly hidden in a hand, low in the lap
+or **out of the camera's view**. Aim the camera so the driver's lap and hands are in
+the frame, not just the face. A wide-angle camera helps. Test with
+`python scripts/hardware_check.py phone`.
 
 ## Using the simulator
 

@@ -22,6 +22,7 @@ from .config import Config
 from .face_tracker import FaceTracker
 from .imu import FakeSensor, IMUThread, ManualMotion
 from .logger import SessionLogger
+from .phone import PhoneDetectorThread, PhonePolicy, PhoneState, PhoneUseTracker, face_box
 from .policy import ContextPolicy, FixedPolicy
 
 STATE_KEYS = {ord("1"): "stopped", ord("2"): "cruising",
@@ -43,20 +44,31 @@ def parse_args():
     p.add_argument("--preview", action="store_true", help="show the camera window (needs a desktop)")
     p.add_argument("--record", action="store_true", help="also save the camera video")
     p.add_argument("--calib-seconds", type=float, help="road-center calibration length")
+    p.add_argument("--phone", choices=["auto", "hailo", "mediapipe", "off"],
+                   help="phone detector: AI HAT+, CPU, or off (default auto)")
     return p.parse_args()
 
 
-def draw_overlay(frame_bgr, face, att, motion, live_alert, fps):
+def draw_overlay(frame_bgr, face, att, motion, phone, live_alert, fps):
     if face.landmarks is not None:
         for x, y in face.landmarks[::4]:
             cv2.circle(frame_bgr, (int(x), int(y)), 1, (0, 255, 0), -1)
+    if phone.box is not None:
+        x0, y0, x1, y1 = (int(v) for v in phone.box)
+        pcolor = (255, 0, 255) if phone.in_use else (255, 200, 0)
+        cv2.rectangle(frame_bgr, (x0, y0), (x1, y1), pcolor, 2)
+        cv2.putText(frame_bgr, f"phone {phone.score:.2f}", (x0, max(15, y0 - 6)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, pcolor, 2)
     color = (0, 0, 255) if live_alert else ((0, 200, 255) if att.off_road else (0, 200, 0))
+    phone_text = (f"PHONE IN USE: {phone.use_reason} {phone.use_duration:.1f}s" if phone.in_use
+                  else ("phone seen" if phone.visible else "no phone"))
     lines = [
         f"{'ALERT' if live_alert else ('OFF ROAD: ' + att.reason if att.off_road else 'eyes on road')}"
         f"  {att.off_road_duration:.1f}s",
         f"motion: {motion.state}   fps: {fps:.0f}",
         f"yaw {att.head_yaw_rel:+.0f}  pitch {att.head_pitch_rel:+.0f}  "
         f"gaze {att.gaze_x_rel:+.2f},{att.gaze_y_rel:+.2f}",
+        phone_text,
     ]
     for i, text in enumerate(lines):
         cv2.putText(frame_bgr, text, (10, 25 + 25 * i), cv2.FONT_HERSHEY_SIMPLEX,
@@ -73,6 +85,8 @@ def main():
         cfg.attention.calibration_seconds = args.calib_seconds
     if args.policy:
         cfg.policy.live_policy = args.policy
+    if args.phone:
+        cfg.phone.backend = args.phone
 
     stop = False
 
@@ -83,7 +97,8 @@ def main():
 
     camera = open_camera(cfg.camera)
     tracker = FaceTracker(cfg.face)
-    alerts = NullAlerts() if args.no_gpio else GPIOAlerts(cfg.pins)
+    phone_det = None if cfg.phone.backend == "off" else PhoneDetectorThread(cfg.phone)
+    alerts =NullAlerts() if args.no_gpio else GPIOAlerts(cfg.pins)
     live_alerts = alerts if args.alerts == "on" else NullAlerts()
 
     if args.no_imu:
@@ -127,8 +142,11 @@ def main():
     attention = AttentionTracker(zone, cfg.attention)
     fixed = FixedPolicy(cfg.policy.fixed_limit_s)
     context = ContextPolicy(cfg.policy.context_limits_s)
+    phone_use = PhoneUseTracker(cfg.phone)
+    phone_policy = PhonePolicy(cfg.policy.phone_alert_s)
     log.write_meta(participant=args.participant, session=args.session,
                    alerts=args.alerts, live_policy=cfg.policy.live_policy,
+                   phone_backend=phone_det.backend.name if phone_det else "off",
                    started=time.strftime("%Y-%m-%d %H:%M:%S"), road_zone=zone,
                    imu_frame=getattr(motion_src, "frame", None), config=cfg)
 
@@ -144,9 +162,23 @@ def main():
             att = attention.update(face, t)
             motion = motion_src.reading()
 
+            det_t, det_age = None, float("nan")
+            if phone_det:
+                phone_det.submit(frame, t)
+                det_t, dets, _ = phone_det.result()
+                if det_t is not None:
+                    det_age = t - det_t
+                phone = phone_use.update(t, det_t, dets, frame, face_box(face.landmarks),
+                                         att.off_road)
+            else:
+                phone = PhoneState()
+
             a_fixed = fixed.should_alert(att.off_road, att.off_road_duration, motion.state)
             a_context = context.should_alert(att.off_road, att.off_road_duration, motion.state)
+            a_phone = phone_policy.should_alert(phone, motion.state)
             live = a_context if cfg.policy.live_policy == "context" else a_fixed
+            if cfg.policy.phone_alerts_live:
+                live = live or a_phone
 
             if live:
                 live_alerts.show("alert")
@@ -168,7 +200,7 @@ def main():
                                                  cfg.camera.fps, (w, h))
                     writer.write(bgr)  # raw frames: frame N = CSV row N
                 if args.preview:
-                    cv2.imshow("Crash Catcher", draw_overlay(bgr, face, att, motion, live, fps))
+                    cv2.imshow("Crash Catcher", draw_overlay(bgr, face, att, motion, phone, live, fps))
                     key = cv2.waitKey(1) & 0xFF
             if key == ord("q"):
                 break
@@ -190,7 +222,14 @@ def main():
                     off_duration=att.off_road_duration,
                     motion_state=motion.state, long_accel=motion.long_accel,
                     yaw_rate=motion.yaw_rate, accel_std=motion.accel_std,
-                    alert_fixed=a_fixed, alert_context=a_context, alert_live=live,
+                    phone_visible=phone.visible, phone_score=phone.score,
+                    phone_cx=phone.cx, phone_cy=phone.cy, phone_area=phone.area,
+                    phone_area_rate=phone.area_rate, phone_brightness=phone.brightness,
+                    phone_near_face=phone.near_face, phone_in_use=phone.in_use,
+                    phone_use_reason=phone.use_reason,
+                    phone_use_duration=phone.use_duration, phone_det_age=det_age,
+                    alert_fixed=a_fixed, alert_context=a_context, alert_phone=a_phone,
+                    alert_live=live,
                     event=event)
             frame_idx += 1
 
@@ -199,7 +238,8 @@ def main():
                 fps = fps_n / (t - fps_t)
                 fps_t, fps_n = t, 0
                 print(f"[main] {fps:.1f} fps | motion {motion.state} | "
-                      f"{'OFF ROAD ' + att.reason if att.off_road else 'on road'}")
+                      f"{'OFF ROAD ' + att.reason if att.off_road else 'on road'} | "
+                      f"{'PHONE IN USE ' + phone.use_reason if phone.in_use else ('phone seen' if phone.visible else 'no phone')}")
     finally:
         print(f"[main] stopping, {frame_idx} frames saved to {log.dir}")
         log.close()
@@ -208,6 +248,8 @@ def main():
         motion_src.stop()
         alerts.close()
         tracker.close()
+        if phone_det:
+            phone_det.stop()
         camera.close()
         if button:
             button.close()

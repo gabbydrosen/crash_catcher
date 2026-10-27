@@ -48,6 +48,26 @@ class AttentionConfig:
 
 
 @dataclass
+class PhoneConfig:
+    # "auto" tries the AI HAT+ first and falls back to the CPU.
+    # Also "hailo", "mediapipe", or "off".
+    backend: str = "auto"
+    # "auto" picks a YOLOv8 model in /usr/share/hailo-models that matches the chip.
+    hailo_model: str = "auto"
+    mediapipe_model: str = "models/efficientdet_lite0.tflite"
+    # Phones are small and often half hidden, so accept fairly low scores.
+    score_threshold: float = 0.35
+    max_hz_hailo: float = 30.0
+    max_hz_cpu: float = 8.0      # leave CPU time for face tracking
+    # Bridge missed detections shorter than this (seconds).
+    hold_s: float = 0.6
+    # A phone in view this long counts as "in use".
+    use_min_s: float = 1.0
+    # "Near the face" = within this fraction of the face width (phone to ear).
+    near_face_margin: float = 0.3
+
+
+@dataclass
 class IMUConfig:
     enabled: bool = True
     i2c_bus: int = 1
@@ -92,6 +112,10 @@ class PolicyConfig:
     # Which policy drives the LED and buzzer live: "context" or "fixed".
     # Both are always computed and logged.
     live_policy: str = "context"
+    # Alert when a phone has been in use this long while the car is moving.
+    phone_alert_s: float = 1.0
+    # Whether phone alerts also drive the LED and buzzer (always logged).
+    phone_alerts_live: bool = True
 
 
 @dataclass
@@ -113,6 +137,7 @@ class PinConfig:
 class Config:
     camera: CameraConfig = field(default_factory=CameraConfig)
     face: FaceConfig = field(default_factory=FaceConfig)
+    phone: PhoneConfig = field(default_factory=PhoneConfig)
     attention: AttentionConfig = field(default_factory=AttentionConfig)
     imu: IMUConfig = field(default_factory=IMUConfig)
     motion: MotionConfig = field(default_factory=MotionConfig)

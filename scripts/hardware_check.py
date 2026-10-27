@@ -5,6 +5,7 @@
   python scripts/hardware_check.py imu      # tilt/rotate the board and watch the numbers
   python scripts/hardware_check.py camera
   python scripts/hardware_check.py face     # needs the model downloaded
+  python scripts/hardware_check.py phone    # hold a phone up to the camera
 """
 
 import os
@@ -104,8 +105,32 @@ def check_face(cfg):
     cam.close()
 
 
+def check_phone(cfg):
+    from crash_catcher.camera import open_camera
+    from crash_catcher.phone import open_backend
+    cam = open_camera(cfg.camera)
+    backend = open_backend(cfg.phone)
+    print("Hold a phone up in front of the camera. Ctrl+C to stop.")
+    try:
+        while True:
+            frame = cam.read()
+            t0 = time.monotonic()
+            dets = backend.detect(frame)
+            ms = (time.monotonic() - t0) * 1000
+            if dets:
+                best = max(dets, key=lambda d: d.score)
+                print(f"\rPHONE  score {best.score:.2f}  box {[int(v) for v in best.box]}  "
+                      f"{ms:5.0f} ms   ", end="", flush=True)
+            else:
+                print(f"\rno phone{' ' * 40}{ms:5.0f} ms   ", end="", flush=True)
+    except KeyboardInterrupt:
+        print()
+    backend.close()
+    cam.close()
+
+
 CHECKS = {"led": check_led, "buzzer": check_buzzer, "imu": check_imu,
-          "camera": check_camera, "face": check_face}
+          "camera": check_camera, "face": check_face, "phone": check_phone}
 
 if __name__ == "__main__":
     if len(sys.argv) != 2 or sys.argv[1] not in CHECKS:

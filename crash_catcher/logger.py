@@ -19,7 +19,10 @@ COLUMNS = [
     "head_yaw_rel", "head_pitch_rel", "gaze_x_rel", "gaze_y_rel",
     "off_road", "off_reason", "off_duration",
     "motion_state", "long_accel", "yaw_rate", "accel_std",
-    "alert_fixed", "alert_context", "alert_live",
+    "phone_visible", "phone_score", "phone_cx", "phone_cy", "phone_area",
+    "phone_area_rate", "phone_brightness", "phone_near_face",
+    "phone_in_use", "phone_use_reason", "phone_use_duration", "phone_det_age",
+    "alert_fixed", "alert_context", "alert_phone", "alert_live",
     "event",
 ]
 

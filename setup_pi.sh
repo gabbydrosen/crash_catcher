@@ -18,11 +18,23 @@ python3 -m venv --system-site-packages .venv
 .venv/bin/pip install --upgrade pip
 .venv/bin/pip install -r requirements.txt
 
-echo "== Face model =="
+echo "== Models (face tracker + CPU phone detector) =="
 mkdir -p models
 if [ ! -f models/face_landmarker.task ]; then
     curl -L -o models/face_landmarker.task \
         https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task
+fi
+if [ ! -f models/efficientdet_lite0.tflite ]; then
+    curl -L -o models/efficientdet_lite0.tflite \
+        https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/int8/latest/efficientdet_lite0.tflite
+fi
+
+echo "== AI HAT+ (phone detection) =="
+if lspci 2>/dev/null | grep -qi hailo; then
+    # Drivers, runtime, and ready-made YOLO models in /usr/share/hailo-models
+    sudo apt-get install -y hailo-all || echo "hailo-all failed to install; phone detection will use the CPU"
+else
+    echo "No AI HAT+ found (that's fine; phone detection will use the CPU)."
 fi
 
 echo "== Checking imports =="
@@ -41,4 +53,4 @@ EOF
 
 echo
 echo "Done. Next: source .venv/bin/activate, then python scripts/hardware_check.py led"
-echo "(I2C was just enabled; if the IMU isn't found, reboot once.)"
+echo "Reboot once now (sudo reboot) so I2C and the AI HAT+ driver take effect."
